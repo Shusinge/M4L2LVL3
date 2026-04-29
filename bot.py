@@ -1,6 +1,7 @@
+import cv2
 import discord
 from discord.ext import commands, tasks
-from logic import DatabaseManager, hide_img
+from logic import DatabaseManager, create_collage, hide_img
 from config import TOKEN, DATABASE
 import os
 
@@ -64,6 +65,46 @@ async def rating(ctx):
     res = '\n'.join(res)
     res = f'|USER_NAME    |COUNT_PRIZE|\n{"_"*26}\n' + res
     await ctx.send(f"```\n{res}\n```")
+
+@bot.command()
+async def get_my_score(ctx):
+    user_id = ctx.author.id
+
+    # 1. Ambil daftar gambar yang sudah dimenangkan user
+    winners_img = manager.get_winners_img(user_id)
+    # winners_img sudah berupa list nama file, misal ['gambar1.png', 'gambar2.jpg']
+    prizes_set = set(winners_img)  # Untuk pengecekan cepat
+
+    # 2. Dapatkan SEMUA gambar yang ada di database (folder img)
+    all_images = os.listdir('img')  # semua file gambar asli
+
+    # 3. Buat list path gambar:
+    #    - Jika user sudah menang -> pakai gambar asli dari img/
+    #    - Jika belum -> pakai gambar tersembunyi (terenkripsi) dari hidden_img/
+    image_paths = []
+    for img_name in all_images:
+        if img_name in prizes_set:
+            image_paths.append(f'img/{img_name}')
+        else:
+            image_paths.append(f'hidden_img/{img_name}')
+
+    # 4. Buat kolase
+    collage = create_collage(image_paths)
+    if collage is None:
+        await ctx.send("Tidak ada gambar untuk ditampilkan.")
+        return
+
+    # 5. Simpan kolase ke file sementara
+    output_path = f'collage_{user_id}.png'
+    cv2.imwrite(output_path, collage)
+
+    # 6. Kirim file ke Discord
+    with open(output_path, 'rb') as f:
+        file = discord.File(f)
+        await ctx.send(file=file, content="🎨 **Kolase pencapaianmu** – Gambar yang sudah kamu dapatkan ditampilkan jelas, sisanya masih terenkripsi!")
+
+    # 7. Hapus file sementara
+    os.remove(output_path)
 
 @bot.event
 async def on_interaction(interaction):

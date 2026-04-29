@@ -3,6 +3,9 @@ from datetime import datetime
 from config import DATABASE 
 import os
 import shutil
+import cv2
+import numpy as np
+from math import sqrt, ceil, floor
 
 def hide_img(img_name):
     """
@@ -19,6 +22,50 @@ def hide_img(img_name):
         print(f"Gambar {img_name} tidak ditemukan di folder img/")
     except Exception as e:
         print(f"Error: {e}")
+
+def create_collage(image_paths):
+    """
+    Membuat kolase dari daftar path gambar.
+    Mengembalikan array numpy (gambar kolase).
+    """
+    images = []
+    for path in image_paths:
+        # Baca gambar, jika gagal (misal file tidak ada) bisa di-skip atau diisi placeholder
+        img = cv2.imread(path)
+        if img is not None:
+            images.append(img)
+        else:
+            # Buat placeholder hitam agar layout kolase tetap rapi
+            print(f"Peringatan: Gambar {path} tidak ditemukan, diisi placeholder hitam.")
+            placeholder = np.zeros((100, 100, 3), dtype=np.uint8)  # ukuran sementara
+            images.append(placeholder)
+
+    if not images:
+        return None  # Tidak ada gambar sama sekali
+
+    num_images = len(images)
+    # Tentukan jumlah kolom berdasarkan akar kuadrat
+    num_cols = floor(sqrt(num_images))
+    if num_cols == 0:
+        num_cols = 1
+    num_rows = ceil(num_images / num_cols)
+
+    # Asumsikan semua gambar berukuran sama, ambil ukuran dari gambar pertama
+    img_h, img_w = images[0].shape[:2]
+
+    # Buat kanvas kolase
+    collage = np.zeros((num_rows * img_h, num_cols * img_w, 3), dtype=np.uint8)
+
+    # Tempel gambar satu per satu
+    for i, img in enumerate(images):
+        # Jika ukuran gambar berbeda, resize dulu agar seragam (opsional)
+        if img.shape[:2] != (img_h, img_w):
+            img = cv2.resize(img, (img_w, img_h))
+        row = i // num_cols
+        col = i % num_cols
+        collage[row*img_h:(row+1)*img_h, col*img_w:(col+1)*img_w] = img
+
+    return collage
 
 class DatabaseManager:
     def __init__(self, database):
@@ -160,6 +207,17 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"Database error: {e}")
             return []
+        
+    def get_winners_img(self, user_id):
+        conn = sqlite3.connect(self.database)
+        with conn:
+            cur = conn.cursor()
+            cur.execute(''' 
+        SELECT image FROM winners 
+        INNER JOIN prizes ON 
+        winners.prize_id = prizes.prize_id
+        WHERE user_id = ?''', (user_id, ))
+            return cur.fetchall()
 
 if __name__ == '__main__':
     manager = DatabaseManager(DATABASE)

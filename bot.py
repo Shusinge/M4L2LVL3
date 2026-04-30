@@ -130,4 +130,128 @@ async def on_ready():
     if not send_message.is_running():
         send_message.start()
 
+@bot.command()
+async def resend(ctx):
+    """Mengirim ulang gambar yang belum di-claim user"""
+    user_id = ctx.author.id
+    
+    # Ambil hadiah yang belum di-claim
+    unclaimed = manager.get_sent_but_unclaimed(user_id)
+    
+    if not unclaimed:
+        await ctx.send("Kamu sudah mengklaim semua gambar yang dikirimkan! 🎉")
+        return
+    
+    await ctx.send(f"Ditemukan {len(unclaimed)} gambar yang belum kamu klaim. Mengirim ulang...")
+    
+    for prize_id, img in unclaimed:
+        try:
+            # Kirim ulang gambar
+            await send_image(ctx.author, f'hidden_img/{img}', prize_id)
+        except Exception as e:
+            await ctx.send(f"Gagal mengirim {img}: {e}")
+
+@bot.command()
+async def score(ctx):
+    """Cek skor dan bonus"""
+    user_id = ctx.author.id
+    score, bonuses = manager.get_user_score(user_id)
+    
+    embed = discord.Embed(title="📊 Statistik Kamu", color=0x00ff00)
+    embed.add_field(name="Skor", value=f"⭐ {score}", inline=True)
+    embed.add_field(name="Bonus Tersedia", value=f"🎁 {bonuses}", inline=True)
+    embed.add_field(name="Tukar Bonus", value="`!bonus resend` (50⭐)\n`!bonus extra_time` (100⭐)", inline=False)
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def bonus(ctx, bonus_type=None):
+    """Tukar bonus dengan skor"""
+    if not bonus_type:
+        await ctx.send("Penggunaan: `!bonus <tipe>`\nTipe: `resend`, `extra_time`")
+        return
+    
+    success, message = manager.use_bonus(ctx.author.id, bonus_type)
+    
+    if success:
+        if bonus_type == 'resend':
+            # Trigger resend otomatis
+            await ctx.send(f"{message}\nMengirim ulang gambar yang belum di-claim...")
+            await resend(ctx)
+        elif bonus_type == 'extra_time':
+            # Beri waktu ekstra 30 detik untuk klaim berikutnya (implementasi sederhana)
+            await ctx.send(f"{message}\nKamu akan dapat waktu ekstra 30 detik untuk klaim berikutnya!")
+    
+    await ctx.send(message)
+
+def is_admin_check(ctx):
+    """Check untuk admin commands"""
+    return manager.is_admin(ctx.author.id)
+
+@bot.command()
+@commands.check(is_admin_check)
+async def add_image(ctx):
+    """Admin: Tambah gambar baru ke bot"""
+    if not ctx.message.attachments:
+        await ctx.send("Harap lampirkan gambar!")
+        return
+    
+    attachment = ctx.message.attachments[0]
+    if not attachment.filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+        await ctx.send("Format tidak didukung! Gunakan PNG, JPG, atau GIF")
+        return
+    
+    # Simpan gambar
+    filepath = f'img/{attachment.filename}'
+    await attachment.save(filepath)
+    
+    # Tambah ke database
+    if manager.add_prize_from_admin(attachment.filename):
+        await ctx.send(f"✅ Gambar {attachment.filename} berhasil ditambahkan!")
+    else:
+        await ctx.send("❌ Gagal menambahkan gambar ke database")
+
+@bot.command()
+@commands.check(is_admin_check)
+async def set_frequency(ctx, minutes: int):
+    """Admin: Atur frekuensi pengiriman (menit)"""
+    if minutes < 1:
+        await ctx.send("Frekuensi minimal 1 menit!")
+        return
+    
+    manager.update_bot_config('frequency', str(minutes))
+    
+    # Restart task dengan frekuensi baru
+    send_message.change_interval(minutes=minutes)
+    
+    await ctx.send(f"✅ Frekuensi pengiriman diubah menjadi setiap {minutes} menit")
+
+@bot.command()
+@commands.check(is_admin_check)
+async def set_bonus(ctx, bonus_type: str, points: int):
+    """Admin: Atur harga bonus"""
+    manager.update_bot_config(f'bonus_{bonus_type}', str(points))
+    await ctx.send(f"✅ Harga bonus {bonus_type} diubah menjadi {points} poin")
+
+@bot.command()
+@commands.check(is_admin_check)
+async def bot_stats(ctx):
+    """Admin: Lihat statistik bot"""
+    total_users = len(manager.get_users())
+    total_prizes = len(os.listdir('img')) if os.path.exists('img') else 0
+    
+    embed = discord.Embed(title="📊 Statistik Bot", color=0x00ff00)
+    embed.add_field(name="Total User", value=str(total_users), inline=True)
+    embed.add_field(name="Total Hadiah", value=str(total_prizes), inline=True)
+    embed.add_field(name="Frekuensi", value=f"{manager.get_bot_config('frequency') or 1} menit", inline=True)
+    
+    await ctx.send(embed=embed)
+
+# Error handler untuk admin check
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ Kamu tidak punya izin! Hanya admin yang bisa menggunakan perintah ini.")
+
+
 bot.run(TOKEN)
